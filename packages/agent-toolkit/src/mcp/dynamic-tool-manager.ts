@@ -1,5 +1,6 @@
 import { Tool } from '../core/tool';
 import { ToolkitManager } from '../core/tools/platform-api-tools/manage-tools-tool';
+import { ToolAttentionOptions, ToolAttentionResult, ToolRelevanceScorer } from './tool-relevance';
 
 /**
  * Interface representing an MCP server tool registration handle
@@ -24,6 +25,8 @@ interface DynamicTool {
  */
 export class DynamicToolManager implements ToolkitManager {
   private readonly dynamicTools: Map<string, DynamicTool> = new Map();
+
+  private readonly relevanceScorer: ToolRelevanceScorer = new ToolRelevanceScorer();
 
   /**
    * Register a tool for dynamic management
@@ -153,6 +156,52 @@ export class DynamicToolManager implements ToolkitManager {
    */
   getAllDynamicTools(): Map<string, DynamicTool> {
     return this.dynamicTools;
+  }
+
+  /**
+   * Apply per-query "Tool Attention" gating: score every registered tool
+   * against the query, enable the relevant subset, and disable the rest to
+   * shrink the per-turn tool-schema payload (the MCP tax). Off-domain queries
+   * (nothing relevant) leave the catalog at its static defaults so the agent is
+   * never gated out of every tool; the agent-driven manage_tools path remains a
+   * fallback regardless.
+   */
+  applyToolAttention(query: string, options: ToolAttentionOptions = {}): ToolAttentionResult {
+    const { minScore = 0, maxEnabled, preserveToolNames = [] } = options;
+    const preserve = new Set(preserveToolNames);
+
+    const tools = Array.from(this.dynamicTools.values()).map((dynamicTool) => dynamicTool.instance);
+    const scored = this.relevanceScorer.scoreTools(query, tools);
+    const scores: Record<string, number> = {};
+    for (const { name, score } of scored) scores[name] = score;
+
+    const relevant = scored.filter((entry) => entry.score > minScore);
+    if (relevant.length === 0) {
+      return { query, enabled: [], disabled: [], scores, fallback: true };
+    }
+
+    const enabledByAttention = new Set<string>();
+    for (const { name } of relevant) {
+      enabledByAttention.add(name);
+      if (maxEnabled !== undefined && enabledByAttention.size >= maxEnabled) break;
+    }
+
+    const enabled: string[] = [];
+    const disabled: string[] = [];
+    this.dynamicTools.forEach((dynamicTool, name) => {
+      if (preserve.has(name)) {
+        this.enableTool(name);
+        enabled.push(name);
+      } else if (enabledByAttention.has(name)) {
+        this.enableTool(name);
+        enabled.push(name);
+      } else {
+        this.disableTool(name);
+        disabled.push(name);
+      }
+    });
+
+    return { query, enabled, disabled, scores, fallback: false };
   }
 
   /**
