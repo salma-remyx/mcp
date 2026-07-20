@@ -8,6 +8,8 @@ import { Tool } from '../core/tool';
 import { MondayAgentToolkitConfig } from '../core/monday-agent-toolkit';
 import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-tool';
 import { DynamicToolManager } from './dynamic-tool-manager';
+import { gateTools as gateToolsByRelevance, getToolStub } from './tool-attention';
+import type { GateOptions, ToolAttentionResult, ToolStub } from './tool-attention';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
 
@@ -258,6 +260,52 @@ export class MondayAgentToolkit extends McpServer {
       annotations: tool.annotations,
       handler: this.createMcpToolHandler(tool),
     }));
+  }
+
+  /**
+   * All registered tools, including the management tool when it is enabled.
+   */
+  private getAllRegisteredTools(): Tool<any, any>[] {
+    const all = [...this.toolInstances];
+    if (this.managementTool) {
+      all.push(this.managementTool);
+    }
+    return all;
+  }
+
+  /**
+   * Lazy schema view: compact tool stubs (name, description, parameter surface)
+   * without materializing the full input schemas. Phase one of two-phase lazy
+   * tool loading — see tool-attention.ts. Adapted from arXiv:2604.21816.
+   */
+  public getToolStubs(): ToolStub[] {
+    return this.getAllRegisteredTools().map((tool) => getToolStub(tool));
+  }
+
+  /**
+   * Measure the "MCP/Tools Tax": the estimated per-turn tokens the current tool
+   * set would cost if every full input schema were eagerly injected.
+   */
+  public getToolTokenReport(): { totalSchemaTokens: number; perTool: Record<string, number> } {
+    const perTool: Record<string, number> = {};
+    let totalSchemaTokens = 0;
+    for (const tool of this.getAllRegisteredTools()) {
+      const tokens = getToolStub(tool).estimatedSchemaTokens;
+      perTool[tool.name] = tokens;
+      totalSchemaTokens += tokens;
+    }
+    return { totalSchemaTokens, perTool };
+  }
+
+  /**
+   * Dynamic tool gating (the paper's ISO gate): score each tool's relevance to a
+   * query and split into gated-in vs deferred, reporting the per-turn token
+   * savings from deferring the gated-out schemas. Does not mutate tool
+   * registration. Adapted from arXiv:2604.21816 (relevance head replaced by a
+   * parameter-free lexical proxy — see tool-attention.ts).
+   */
+  public gateTools(query: string, options?: GateOptions): ToolAttentionResult {
+    return gateToolsByRelevance(this.getAllRegisteredTools(), query, options);
   }
 
   /**
