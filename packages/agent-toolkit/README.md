@@ -58,6 +58,10 @@ The toolkit includes several pre-built tools for common monday.com operations, o
 - `GetGraphQLSchemaTool` - Fetch the monday.com GraphQL schema structure including query and mutation definitions
 - `GetTypeDetailsTool` - Get detailed information about a specific GraphQL type from the monday.com API schema
 
+### Dynamic Tool Gating (Lazy Schema Loading)
+
+- `gateByIntent(intent, options?)` on `DynamicToolManager` enables only the registered tools whose schema vocabulary overlaps the current turn intent (plus any `alwaysOn` tools) and disables the rest, so full schemas for off-topic tools are not injected every turn. The companion `gate()` helper in `tool-gating` exposes the two-phase split: a cheap summary entry for every tool and an on-demand detail pool of full schemas for the gated subset, with an estimated per-turn token-tax reduction. (Capability adapted from _Tool Attention Is All You Need_.)
+
 ## Development
 
 A Cursor skill is available at `.cursor/skills/agent-toolkit-api-tools/SKILL.md` with detailed guidance on creating and modifying platform API tools, including the GraphQL codegen pipeline, tool registration, and version bumping.

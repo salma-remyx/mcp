@@ -1,5 +1,7 @@
 import { Tool } from '../core/tool';
 import { ToolkitManager } from '../core/tools/platform-api-tools/manage-tools-tool';
+import { gate } from './tool-gating';
+import type { GateOptions, ToolGateMeta } from './tool-gating';
 
 /**
  * Interface representing an MCP server tool registration handle
@@ -146,6 +148,35 @@ export class DynamicToolManager implements ToolkitManager {
     }
 
     return true;
+  }
+
+  /**
+   * Per-turn intent gating (state-aware): enable only the tools whose schema
+   * vocabulary overlaps the current intent (plus always-on tools) and disable
+   * the rest, so their full schemas are not injected this turn. Returns the
+   * gated detail pool. Scoring and the summary/detail split live in
+   * ./tool-gating. Adapted from "Tool Attention Is All You Need" (arXiv:2604.21816).
+   */
+  gateByIntent(intent: string, options?: GateOptions): string[] {
+    const metas: ToolGateMeta[] = [];
+    this.dynamicTools.forEach((dynamicTool, name) => {
+      const schema = dynamicTool.instance.getInputSchema();
+      metas.push({
+        name,
+        description: dynamicTool.instance.getDescription(),
+        paramNames: schema ? Object.keys(schema) : [],
+      });
+    });
+    const detailPool = gate(metas, intent, options).detailPool;
+    const keep = new Set(detailPool);
+    this.dynamicTools.forEach((_dynamicTool, name) => {
+      if (keep.has(name)) {
+        this.enableTool(name);
+      } else {
+        this.disableTool(name);
+      }
+    });
+    return detailPool;
   }
 
   /**
