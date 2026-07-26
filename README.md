@@ -442,6 +442,23 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 
 It is clarified that the server uses the monday.com API, which is subject to monday.com's [Developer Terms](https://monday.com/l/marketplace-developers/developer-terms/)
 
+## 🎯 Tool Attention — Intent-Driven Tool Gating
+
+**Tool Attention** lets the toolkit gate which tools are exposed to the LLM on a per-intent basis, so the model only pays the per-turn schema/token cost for tools relevant to the current request. Given a user intent, every registered tool is scored by Intent-Schema-Overlap (overlap between the intent and the tool's name, description, parameter names, descriptions, and enum values); only the top-K highest-scoring tools are gated ON, while the rest are disabled through the existing dynamic tool manager. The MCP `listChanged` capability then propagates the trimmed tool list, so the LLM only ever sees the gated-on tools' full schemas.
+
+This is exposed directly on the agent toolkit:
+
+```ts
+const toolkit = new MondayAgentToolkit({
+  mondayApiToken,
+  toolsConfiguration: { enableToolManager: true },
+});
+// Gate ON only the tools relevant to this turn; the management tool stays enabled.
+const selected = toolkit.selectToolsForIntent('search for items about the marketing board', { topK: 5 });
+```
+
+Adapted from _Tool Attention Is All You Need: Dynamic Tool Gating and Lazy Schema Loading for Eliminating the MCP/Tools Tax in Scalable Agentic Workflows_ (arXiv:2604.21816). The paper's learned overlap estimator is replaced here by a parameter-free vocabulary-overlap proxy, and the per-turn gating reuses the toolkit's existing dynamic enable/disable + `listChanged` hooks rather than a separate two-phase transport.
+
 ---
 
 <div align="center">

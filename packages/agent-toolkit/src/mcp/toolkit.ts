@@ -8,6 +8,7 @@ import { Tool } from '../core/tool';
 import { MondayAgentToolkitConfig } from '../core/monday-agent-toolkit';
 import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-tool';
 import { DynamicToolManager } from './dynamic-tool-manager';
+import { buildToolManifest, rankToolsForIntent, type SelectToolsOptions, type SelectedTool } from './tool-attention';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
 
@@ -196,6 +197,36 @@ export class MondayAgentToolkit extends McpServer {
    */
   public getDynamicToolNames(): string[] {
     return this.dynamicToolManager.getDynamicToolNames();
+  }
+
+  /**
+   * Tool Attention (adapted from arXiv:2604.21816): score every registered
+   * tool against `intent` by Intent-Schema-Overlap, gate ON only the top-K, and
+   * drive the existing DynamicToolManager enable/disable hooks so the LLM only
+   * receives schemas for the gated-on tools this turn (the MCP `listChanged`
+   * capability then propagates the trimmed tool list). Returns the gated tools
+   * with their scores. The management tool (if present) is forced on.
+   */
+  public selectToolsForIntent(intent: string, options?: SelectToolsOptions): SelectedTool[] {
+    const allTools = [...this.toolInstances];
+    if (this.managementTool) {
+      allTools.push(this.managementTool);
+    }
+
+    const alwaysInclude = options?.alwaysInclude ?? (this.managementTool ? [this.managementTool.name] : []);
+    const entries = allTools.map((tool) => buildToolManifest(tool));
+    const selected = rankToolsForIntent(intent, entries, { ...options, alwaysInclude });
+    const selectedNames = new Set(selected.map((s) => s.name));
+
+    for (const tool of allTools) {
+      if (selectedNames.has(tool.name)) {
+        this.dynamicToolManager.enableTool(tool.name);
+      } else {
+        this.dynamicToolManager.disableTool(tool.name);
+      }
+    }
+
+    return selected;
   }
 
   getServer(): McpServer {
