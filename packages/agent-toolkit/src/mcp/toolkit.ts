@@ -8,6 +8,7 @@ import { Tool } from '../core/tool';
 import { MondayAgentToolkitConfig } from '../core/monday-agent-toolkit';
 import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-tool';
 import { DynamicToolManager } from './dynamic-tool-manager';
+import { gateTools, GateOptions, ToolGateResult } from './tool-gating';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
 
@@ -196,6 +197,38 @@ export class MondayAgentToolkit extends McpServer {
    */
   public getDynamicToolNames(): string[] {
     return this.dynamicToolManager.getDynamicToolNames();
+  }
+
+  /**
+   * Dynamically gate the active tool surface to the tools most relevant to a
+   * given turn/query, disabling the rest. This is the "Dynamic Tool Gating"
+   * half of eliminating the per-turn tool-schema (MCP) tax: instead of every
+   * registered tool's schema being injected every turn, only the relevant
+   * subset stays enabled.
+   *
+   * Relevance is scored by ./tool-gating (a parameter-free lexical proxy that
+   * substitutes for the learned tool-attention ranker in "Tool Attention Is All
+   * You Need", arXiv:2604.21816). Tools outside the gate are disabled through
+   * the existing DynamicToolManager; restore their defaults with enableTool /
+   * resetToolToDefault. The management tool (if any) is left untouched.
+   *
+   * @returns The kept (enabled) and disabled tool names plus per-tool scores.
+   */
+  public gateToolsForQuery(query: string, options?: GateOptions): ToolGateResult {
+    const gated = gateTools(query, this.toolInstances, options);
+    const keep = new Set(gated.map((g) => g.name));
+    const disabled: string[] = [];
+    for (const tool of this.toolInstances) {
+      if (keep.has(tool.name)) {
+        this.enableTool(tool.name);
+      } else {
+        this.disableTool(tool.name);
+        disabled.push(tool.name);
+      }
+    }
+    const scores: Record<string, number> = {};
+    for (const g of gated) scores[g.name] = g.score;
+    return { query, kept: Array.from(keep), disabled, scores };
   }
 
   getServer(): McpServer {
