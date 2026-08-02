@@ -10,9 +10,25 @@ import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-t
 import { DynamicToolManager } from './dynamic-tool-manager';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
+import {
+  DEFAULT_MAX_FULL_SCHEMAS,
+  selectRelevantToolNames,
+  summarizeJsonSchema,
+} from '../utils/tools/lazy-tool-schemas.utils';
 
 export interface GetToolsOptions {
   schemaFormat?: 'zod' | 'json';
+  /**
+   * Lazy tool-schema loading (opt-in). When set with `schemaFormat: 'json'`,
+   * only the top-k tools most relevant to `query` keep their full JSON schema;
+   * every other tool is emitted as a token-light summary schema. This is the
+   * lazy-schema loader that collapses the per-turn "tools tax". Has no effect
+   * on the default (Zod-shape) path.
+   */
+  lazySchemas?: {
+    query: string;
+    maxFullSchemas?: number;
+  };
 }
 
 /**
@@ -222,10 +238,12 @@ export class MondayAgentToolkit extends McpServer {
       allTools.push(this.managementTool);
     }
 
+    const lazyFullSchemaNames = this.resolveLazyFullSchemaNames(allTools, options);
+
     return allTools.map((tool) => ({
       name: tool.name,
       description: tool.getDescription(),
-      schema: this.getSchemaForTool(tool, options),
+      schema: this.getSchemaForTool(tool, options, lazyFullSchemaNames === null || lazyFullSchemaNames.has(tool.name)),
       annotations: tool.annotations,
       handler: this.createToolHandler(tool),
     }));
@@ -251,10 +269,12 @@ export class MondayAgentToolkit extends McpServer {
       allTools.push(this.managementTool);
     }
 
+    const lazyFullSchemaNames = this.resolveLazyFullSchemaNames(allTools, options);
+
     return allTools.map((tool) => ({
       name: tool.name,
       description: tool.getDescription(),
-      schema: this.getSchemaForTool(tool, options),
+      schema: this.getSchemaForTool(tool, options, lazyFullSchemaNames === null || lazyFullSchemaNames.has(tool.name)),
       annotations: tool.annotations,
       handler: this.createMcpToolHandler(tool),
     }));
@@ -316,9 +336,11 @@ export class MondayAgentToolkit extends McpServer {
    * Get the schema for a tool in the requested format
    * @param tool The tool instance
    * @param options Options for schema format control
+   * @param fullSchema When false (and JSON schema requested), emit a token-light
+   * summary schema instead of the full one — used by the lazy-schema loader.
    * @returns Schema in the requested format (Zod shape or JSON Schema)
    */
-  private getSchemaForTool(tool: Tool<any, any>, options?: GetToolsOptions): any {
+  private getSchemaForTool(tool: Tool<any, any>, options?: GetToolsOptions, fullSchema = true): any {
     const inputSchema = tool.getInputSchema();
 
     if (!inputSchema) {
@@ -326,10 +348,26 @@ export class MondayAgentToolkit extends McpServer {
     }
 
     if (options?.schemaFormat === 'json') {
-      return zodToJsonSchema(z.object(inputSchema));
+      const jsonSchema = zodToJsonSchema(z.object(inputSchema));
+      return fullSchema ? jsonSchema : summarizeJsonSchema(jsonSchema);
     }
 
     return inputSchema;
+  }
+
+  /**
+   * Resolve the set of tool names that should keep their full JSON schema under
+   * lazy loading. Returns null when lazy loading is inactive (every tool full).
+   */
+  private resolveLazyFullSchemaNames(tools: Tool<any, any>[], options?: GetToolsOptions): Set<string> | null {
+    if (!options?.lazySchemas || options.schemaFormat !== 'json') {
+      return null;
+    }
+    return selectRelevantToolNames(
+      tools,
+      options.lazySchemas.query,
+      options.lazySchemas.maxFullSchemas ?? DEFAULT_MAX_FULL_SCHEMAS,
+    );
   }
 
   /**
