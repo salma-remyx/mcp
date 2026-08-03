@@ -1,4 +1,5 @@
 export { getFilteredToolInstances } from './tools/tools-filtering.utils';
+export { gateTools, scoreToolRelevance, tokenize, ToolGatingOptions } from './tools/tool-gating.utils';
 export { toolFactory } from './tools/initializing.utils';
 export { extractTokenInfo, decodeJwtToken, MondayTokenPayload } from './token.utils';
 export { TIME_IN_SECONDS, TIME_IN_MILLISECONDS, NANOSECONDS_PER_MILLISECOND } from './time.utils';

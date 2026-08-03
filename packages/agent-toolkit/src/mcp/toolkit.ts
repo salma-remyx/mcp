@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolResult, ServerCapabilities } from '@modelcontextprotocol/sdk/types';
 import { ApiClient } from '@mondaydotcomorg/api';
 import { getFilteredToolInstances } from '../utils/tools/tools-filtering.utils';
+import { gateTools } from '../utils/tools/tool-gating.utils';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { Tool } from '../core/tool';
@@ -13,6 +14,12 @@ import { formatToolError } from '../utils/error.utils';
 
 export interface GetToolsOptions {
   schemaFormat?: 'zod' | 'json';
+  /**
+   * Optional user query used to gate the returned tools. When provided, only tools relevant to
+   * the query (plus any always-included escape-hatch tools) are returned, reducing the per-turn
+   * injected schema payload. Omit to return all tools (the default eager behavior).
+   */
+  query?: string;
 }
 
 /**
@@ -222,7 +229,12 @@ export class MondayAgentToolkit extends McpServer {
       allTools.push(this.managementTool);
     }
 
-    return allTools.map((tool) => ({
+    // Gate to the query-relevant subset (always keeping the management tool reachable).
+    const gatedTools = gateTools(allTools, options?.query, {
+      alwaysInclude: this.managementTool ? [this.managementTool.name] : [],
+    });
+
+    return gatedTools.map((tool) => ({
       name: tool.name,
       description: tool.getDescription(),
       schema: this.getSchemaForTool(tool, options),
@@ -251,7 +263,12 @@ export class MondayAgentToolkit extends McpServer {
       allTools.push(this.managementTool);
     }
 
-    return allTools.map((tool) => ({
+    // Gate to the query-relevant subset (always keeping the management tool reachable).
+    const gatedTools = gateTools(allTools, options?.query, {
+      alwaysInclude: this.managementTool ? [this.managementTool.name] : [],
+    });
+
+    return gatedTools.map((tool) => ({
       name: tool.name,
       description: tool.getDescription(),
       schema: this.getSchemaForTool(tool, options),

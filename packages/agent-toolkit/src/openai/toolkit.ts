@@ -5,6 +5,7 @@ import type {
   ChatCompletionToolMessageParam,
 } from 'openai/resources';
 import { getFilteredToolInstances } from '../utils/tools/tools-filtering.utils';
+import { gateTools } from '../utils/tools/tool-gating.utils';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { Tool } from '../core/tool';
@@ -61,10 +62,12 @@ export class MondayAgentToolkit {
   /**
    * Returns the tools that are available to be used in the OpenAI API.
    *
+   * @param options.query Optional user query used to gate the returned tools to the query-relevant
+   *   subset, reducing the per-turn injected schema payload. Omit to return all tools.
    * @returns {ChatCompletionTool[]} The tools that are available to be used in the OpenAI API.
    */
-  getTools(): ChatCompletionTool[] {
-    return this.tools.map((tool) => {
+  getTools(options?: { query?: string }): ChatCompletionTool[] {
+    return gateTools(this.tools, options?.query).map((tool) => {
       const inputSchema = tool.getInputSchema();
       return {
         type: 'function',
