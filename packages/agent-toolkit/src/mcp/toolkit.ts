@@ -8,6 +8,7 @@ import { Tool } from '../core/tool';
 import { MondayAgentToolkitConfig } from '../core/monday-agent-toolkit';
 import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-tool';
 import { DynamicToolManager } from './dynamic-tool-manager';
+import { ToolSchemaBudget } from './tool-schema-budget';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
 
@@ -24,6 +25,7 @@ export class MondayAgentToolkit extends McpServer {
   private readonly context?: MondayAgentToolkitConfig['context'];
   private readonly toolkitConfig: MondayAgentToolkitConfig;
   private readonly dynamicToolManager: DynamicToolManager = new DynamicToolManager();
+  private toolSchemaBudget?: ToolSchemaBudget;
   private toolInstances: Tool<any, any>[] = [];
   private managementTool: Tool<any, any> | null = null;
 
@@ -89,6 +91,13 @@ export class MondayAgentToolkit extends McpServer {
     try {
       this.toolInstances = this.initializeTools(config);
       this.toolInstances.forEach((tool) => this.registerSingleTool(tool));
+
+      // Opt-in MCP Tax meter: estimate the per-turn token cost of the toolkit's
+      // tool schemas (lazy-schema lever from Tool Attention Is All You Need).
+      if (config.toolsConfiguration?.enableToolSchemaBudget === true) {
+        this.toolSchemaBudget = new ToolSchemaBudget();
+        this.toolInstances.forEach((tool) => this.toolSchemaBudget!.registerTool(tool));
+      }
 
       // Register the ManageToolsTool only if explicitly enabled
       if (config.toolsConfiguration?.enableToolManager === true) {
@@ -196,6 +205,16 @@ export class MondayAgentToolkit extends McpServer {
    */
   public getDynamicToolNames(): string[] {
     return this.dynamicToolManager.getDynamicToolNames();
+  }
+
+  /**
+   * Get the tool schema budget (MCP Tax meter). Returns undefined unless
+   * `toolsConfiguration.enableToolSchemaBudget` is enabled. Exposes the
+   * estimated per-turn token cost of each tool's schema and compact lazy
+   * descriptors that elide the full schemas.
+   */
+  public getToolSchemaBudget(): ToolSchemaBudget | undefined {
+    return this.toolSchemaBudget;
   }
 
   getServer(): McpServer {

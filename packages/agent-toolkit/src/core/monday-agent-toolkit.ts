@@ -14,6 +14,8 @@ export type ToolsConfiguration = {
   mode?: ToolMode;
   enableDynamicApiTools?: boolean | 'only';
   enableToolManager?: boolean;
+  /** Opt-in MCP Tax meter: estimate the per-turn token cost of tool schemas. */
+  enableToolSchemaBudget?: boolean;
 };
 
 export type MondayFetchRequest = {

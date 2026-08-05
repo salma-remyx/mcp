@@ -436,6 +436,29 @@ We welcome contributions from the community! Whether it's fixing bugs, improving
 4. Push to the branch: `git push origin feature/amazing-feature`
 5. Open a Pull Request
 
+## 🧮 Tool Schema Budget (MCP Tax meter)
+
+Every turn, an MCP server advertises each tool's full JSON schema to the model — a recurring per-turn cost (the "MCP Tax"). The `enableToolSchemaBudget` option turns on an opt-in meter that estimates the token cost of each tool's schema and exposes compact "lazy descriptors" (name + description + param names) that elide the verbose schemas, so callers can defer loading a full schema until a tool is actually selected. This complements the existing dynamic tool gating (`manage_tools`).
+
+### How to enable
+
+Set `enableToolSchemaBudget: true` in `toolsConfiguration`:
+
+```ts
+const toolkit = new MondayAgentToolkit({
+  mondayApiToken: process.env.MONDAY_API_TOKEN,
+  toolsConfiguration: {
+    enableToolSchemaBudget: true,
+  },
+});
+
+const budget = toolkit.getToolSchemaBudget();
+console.log(budget?.getTotalEstimatedTokens()); // estimated per-turn token cost
+console.log(budget?.getLazyDescriptors()); // compact tool list, schemas elided
+```
+
+Off by default — enabling it has no effect on which tools are registered or advertised.
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
