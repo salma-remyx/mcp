@@ -8,6 +8,12 @@ import { Tool } from '../core/tool';
 import { MondayAgentToolkitConfig } from '../core/monday-agent-toolkit';
 import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-tool';
 import { DynamicToolManager } from './dynamic-tool-manager';
+import {
+  buildLazyToolIndex,
+  selectRelevantTools,
+  type LazyToolIndexEntry,
+  type ToolGatingOptions,
+} from './tool-gating';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
 
@@ -258,6 +264,53 @@ export class MondayAgentToolkit extends McpServer {
       annotations: tool.annotations,
       handler: this.createMcpToolHandler(tool),
     }));
+  }
+
+  /**
+   * Phase 1 of lazy schema loading: a compact, low-token tool index ranked by relevance to
+   * a query (name + short description + parameter names, no full schemas). Adapted from the
+   * "Tool Attention" Intent-Schema-Overlap gating approach.
+   */
+  public getLazyToolIndex(query: string, options?: ToolGatingOptions): LazyToolIndexEntry[] {
+    return buildLazyToolIndex(query, this.toolInstances, options);
+  }
+
+  /**
+   * Phase 2: full MCP-shaped descriptors, expanded only for the tools whose relevance to the
+   * query clears the gating threshold (plus the management tool, when present).
+   */
+  public getRelevantTools(
+    query: string,
+    options?: ToolGatingOptions,
+  ): Array<{
+    name: string;
+    description: string;
+    schema: any;
+    annotations: any;
+    handler: (params: any, extra?: any) => Promise<CallToolResult>;
+  }> {
+    const selected = new Set(selectRelevantTools(query, this.toolInstances, options).map((tool) => tool.name));
+    return this.getToolsForMcp().filter((tool) => selected.has(tool.name) || tool.name === this.managementTool?.name);
+  }
+
+  /**
+   * Narrow the live tool surface for a turn by enabling only query-relevant tools, driving the
+   * existing DynamicToolManager enable/disable primitives. Returns the selected and gated names.
+   */
+  public gateToolsForQuery(query: string, options?: ToolGatingOptions): { selected: string[]; gated: string[] } {
+    const selected = new Set(selectRelevantTools(query, this.toolInstances, options).map((tool) => tool.name));
+    const selectedNames: string[] = [];
+    const gatedNames: string[] = [];
+    this.toolInstances.forEach((tool) => {
+      if (selected.has(tool.name)) {
+        this.dynamicToolManager.enableTool(tool.name);
+        selectedNames.push(tool.name);
+      } else {
+        this.dynamicToolManager.disableTool(tool.name);
+        gatedNames.push(tool.name);
+      }
+    });
+    return { selected: selectedNames, gated: gatedNames };
   }
 
   /**
