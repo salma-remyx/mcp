@@ -10,6 +10,7 @@ import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-t
 import { DynamicToolManager } from './dynamic-tool-manager';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
+import { planToolGating, ToolGatingOptions, ToolGatingResult } from '../utils/tools/tool-gating.utils';
 
 export interface GetToolsOptions {
   schemaFormat?: 'zod' | 'json';
@@ -196,6 +197,37 @@ export class MondayAgentToolkit extends McpServer {
    */
   public getDynamicToolNames(): string[] {
     return this.dynamicToolManager.getDynamicToolNames();
+  }
+
+  /**
+   * Query-driven tool gating ("Tool Attention"): score every registered tool
+   * against `query` and keep only the relevant ones enabled, disabling the
+   * rest through the existing DynamicToolManager plumbing. This shrinks the
+   * per-turn tool-schema payload (the "MCP/Tools Tax") without removing any
+   * tool — deferred tools stay registered and can be re-enabled on a later
+   * turn. Opt-in: the toolkit is unchanged until you call this.
+   *
+   * Adapted from "Tool Attention Is All You Need" (arXiv:2604.21816): the
+   * paper's learned ISO predictive gate is replaced by a parameter-free
+   * query/description relevance proxy (see tool-gating.utils).
+   * @returns the gating plan (enabled/disabled names, scores, tax impact)
+   */
+  public gateToolsForQuery(query: string, options?: ToolGatingOptions): ToolGatingResult {
+    const tools = Array.from(this.dynamicToolManager.getAllDynamicTools().values()).map((dynamicTool) => ({
+      name: dynamicTool.instance.name,
+      description: dynamicTool.instance.getDescription(),
+    }));
+
+    const plan = planToolGating(query, tools, options);
+
+    for (const toolName of plan.disabled) {
+      this.disableTool(toolName);
+    }
+    for (const toolName of plan.enabled) {
+      this.enableTool(toolName);
+    }
+
+    return plan;
   }
 
   getServer(): McpServer {

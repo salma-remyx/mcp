@@ -452,3 +452,19 @@ It is clarified that the server uses the monday.com API, which is subject to mon
     <a href="https://github.com/mondaycom/mcp">GitHub</a>
   </p>
 </div>
+
+---
+
+## 🧠 Query-Driven Tool Gating (Tool Attention)
+
+When an agent is connected to many monday.com tools, the full set of tool schemas is sent to the model on every turn — a per-turn token cost (the "MCP/Tools Tax") that grows with the catalogue. `MondayAgentToolkit.gateToolsForQuery()` scores each registered tool against the current query and keeps only the relevant ones enabled, disabling the rest through the existing dynamic-tool plumbing. No tool is removed — deferred tools stay registered and can be re-enabled on a later turn.
+
+```ts
+// Keep only the most relevant tools for this turn:
+toolkit.gateToolsForQuery('create a new item on the board', { maxTools: 3 });
+
+// Or cap the enabled payload by an estimated schema-token budget:
+toolkit.gateToolsForQuery('search for ACME', { tokenBudget: 2000 });
+```
+
+This is an opt-in, parameter-free relevance gate — adapted from the ideas in "Tool Attention Is All You Need". The paper's learned predictive gate is replaced by a query/description relevance proxy, and its bespoke two-phase schema transport reuses the toolkit's existing dynamic enable/disable + `listChanged` support.
