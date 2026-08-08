@@ -452,3 +452,21 @@ It is clarified that the server uses the monday.com API, which is subject to mon
     <a href="https://github.com/mondaycom/mcp">GitHub</a>
   </p>
 </div>
+
+## 🎯 Dynamic Tool Gating (Tool Attention)
+
+Every registered tool's JSON schema is eagerly injected into the model context on each turn — the "MCP Tax", which can run 10k–60k tokens for multi-tool servers. `packages/agent-toolkit/src/mcp/dynamic-tool-gating.ts` trims that tax by **gating the toolset per turn**: only the tools whose name/description overlap the current user intent are kept enabled, so the rest drop out of `tools/list` and their schemas stop being resident.
+
+It composes with existing primitives rather than replacing them:
+
+- Input is the output of the static `getFilteredToolInstances` config filter (mode / include / exclude / readOnly still win).
+- The actuator is the existing `DynamicToolManager` — `applyToolAttention(manager, userIntent, { maxTools })` enables the relevant tools and disables the rest, and the manager's enabled set already drives `tools/list`.
+
+```ts
+import { applyToolAttention } from '@mondaydotcomorg/agent-toolkit/mcp';
+
+// Per-turn hook: advertise only the ~5 most relevant tools this turn.
+applyToolAttention(toolkit['dynamicToolManager'], userIntent, { maxTools: 5 });
+```
+
+The intent match is a parameter-free vocab-overlap score (no model, no extra inference call), so it is cheap to run before every turn. Adapted from *Tool Attention Is All You Need: Dynamic Tool Gating and Lazy Schema Loading for Eliminating the MCP/Tools Tax in Scalable Agentic Workflows* (arXiv 2604.21816).
