@@ -1,5 +1,6 @@
 import { Tool } from '../core/tool';
 import { ToolkitManager } from '../core/tools/platform-api-tools/manage-tools-tool';
+import { selectRelevantTools, ToolDescriptor, ToolGateOptions, ToolGateResult } from './tool-gate';
 
 /**
  * Interface representing an MCP server tool registration handle
@@ -146,6 +147,37 @@ export class DynamicToolManager implements ToolkitManager {
     }
 
     return true;
+  }
+
+  /**
+   * Apply a query-driven gate: enable only the tools whose name/description
+   * match the query, disable the rest. This makes the active schema set
+   * query-adaptive each turn, reducing the per-turn tool-schema payload
+   * (the "MCP/Tools Tax"). See ./tool-gate.ts for the relevance model.
+   *
+   * The discovery tool (manage_tools) is kept enabled by default so the agent
+   * can always re-expand the tool set; pass `alwaysOn` to override.
+   */
+  applyQueryGate(query: string, options?: ToolGateOptions): ToolGateResult {
+    const descriptors: ToolDescriptor[] = [];
+    this.dynamicTools.forEach((dynamicTool, name) => {
+      descriptors.push({
+        name,
+        description: dynamicTool.instance.getDescription() ?? '',
+      });
+    });
+
+    const mergedOptions: ToolGateOptions = { alwaysOn: ['manage_tools'], ...(options ?? {}) };
+    const result = selectRelevantTools(query, descriptors, mergedOptions);
+
+    for (const name of result.enabled) {
+      this.enableTool(name);
+    }
+    for (const name of result.disabled) {
+      this.disableTool(name);
+    }
+
+    return result;
   }
 
   /**

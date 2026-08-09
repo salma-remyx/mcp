@@ -343,6 +343,21 @@ When 'only' mode is enabled, the server will provide just the Dynamic API Tools,
 
 > ⚠️ **Note**: Dynamic API Tools require full API access and are not compatible with read-only mode.
 
+## 🚪 Query-Driven Tool Gate
+
+Every registered tool's schema is normally advertised to the model on every turn — the per-turn "MCP/Tools Tax". The agent toolkit can prune that payload to just the tools relevant to a given turn before the model sees them:
+
+```ts
+// `toolkit` is a MondayAgentToolkit. Enable only the tools matching the query
+// and disable the rest; the discovery tool (manage_tools) stays enabled.
+const result = toolkit.gateToolsForQuery('create a new board for my team');
+// result.enabled  -> tools kept active this turn
+// result.disabled -> tools pruned to shrink the schema payload
+// result.scores   -> per-tool relevance for debugging
+```
+
+The gate scores each tool's name and description against the query with a parameter-free lexical-relevance model (token overlap weighted by corpus IDF), keeps the top matches, and applies the decision through the existing enable/disable contract — disabled tools are not advertised to the client, so the active schema set becomes query-adaptive. If the query shares no terms with any tool, the gate leaves the full set active rather than disabling everything. Adapted from _Tool Attention Is All You Need: Dynamic Tool Gating and Lazy Schema Loading for Eliminating the MCP/Tools Tax in Scalable Agentic Workflows_ (arXiv:2604.21816).
+
 ## 🖥️ MCP Server Configuration
 
 | Argument | Flags | Description | Required | Default |

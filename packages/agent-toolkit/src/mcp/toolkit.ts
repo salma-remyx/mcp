@@ -8,6 +8,7 @@ import { Tool } from '../core/tool';
 import { MondayAgentToolkitConfig } from '../core/monday-agent-toolkit';
 import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-tool';
 import { DynamicToolManager } from './dynamic-tool-manager';
+import { ToolGateOptions, ToolGateResult } from './tool-gate';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
 
@@ -196,6 +197,16 @@ export class MondayAgentToolkit extends McpServer {
    */
   public getDynamicToolNames(): string[] {
     return this.dynamicToolManager.getDynamicToolNames();
+  }
+
+  /**
+   * Gate the active tool set for a query: enable only the tools relevant to the
+   * given query and disable the rest, reducing the per-turn tool-schema payload
+   * (the "MCP/Tools Tax"). Intended to be called by the agent runtime before
+   * each turn. Adapted from "Tool Attention Is All You Need" (arXiv:2604.21816).
+   */
+  public gateToolsForQuery(query: string, options?: ToolGateOptions): ToolGateResult {
+    return this.dynamicToolManager.applyQueryGate(query, options);
   }
 
   getServer(): McpServer {
