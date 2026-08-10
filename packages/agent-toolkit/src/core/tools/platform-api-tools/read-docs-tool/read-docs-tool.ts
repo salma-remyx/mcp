@@ -11,6 +11,7 @@ import {
 } from '../../../../monday-graphql/generated/graphql/graphql';
 import { getDocVersionHistory, getDocVersionDiff } from './read-docs-tool.graphql';
 import { getDocBlockContent } from '../update-doc-tool/update-doc-tool.graphql';
+import { exploreCachedDoc, recordDocs } from './doc-workspace';
 import { ToolInputType, ToolOutputType, ToolType } from '../../../tool';
 import { BaseMondayApiTool, createMondayApiAnnotations } from '../base-monday-api-tool';
 
@@ -67,6 +68,7 @@ type CommentAnchorMap = Map<string, CommentAnchor>;
 
 const CONTENT_MODE = 'content' as const;
 const VERSION_HISTORY_MODE = 'version_history' as const;
+const EXPLORE_CACHE_MODE = 'explore_cache' as const;
 
 const QueryByIdEnum = z.enum(['ids', 'object_ids', 'workspace_ids']);
 
@@ -74,11 +76,11 @@ const MAX_DIFF_POINTS = 10;
 
 export const readDocsToolSchema = {
   mode: z
-    .enum([CONTENT_MODE, VERSION_HISTORY_MODE])
+    .enum([CONTENT_MODE, VERSION_HISTORY_MODE, EXPLORE_CACHE_MODE])
     .optional()
     .default(CONTENT_MODE)
     .describe(
-      'The operation mode. "content" (default) fetches documents with their markdown content. "version_history" fetches the edit history of a single document.',
+      'The operation mode. "content" (default) fetches documents with their markdown content (and records them to a persistent workspace for later re-extraction). "version_history" fetches the edit history of a single document. "explore_cache" re-extracts a snippet/block from a previously fetched document WITHOUT another API call — provide a single doc id in ids plus an optional query or block_ids.',
     ),
 
   // --- content mode fields ---
@@ -89,7 +91,21 @@ export const readDocsToolSchema = {
     .array(z.string())
     .optional()
     .describe(
-      'Array of ID values. In content mode: matches the query type (ids/object_ids/workspace_ids). In version_history mode: provide the single document object_id here (e.g., ids: ["5001466606"]).',
+      'Array of ID values. In content mode: matches the query type (ids/object_ids/workspace_ids). In version_history mode: provide the single document object_id here (e.g., ids: ["5001466606"]). In explore_cache mode: provide a single previously-fetched document id.',
+    ),
+
+  // --- explore_cache mode fields ---
+  query: z
+    .string()
+    .optional()
+    .describe(
+      'Keyword or phrase to search for within a previously cached document (case-insensitive). Returns the matching markdown lines. Only used in explore_cache mode.',
+    ),
+  block_ids: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Specific block ids to extract verbatim from a previously cached document. Requires the prior read_docs call used include_blocks: true. Only used in explore_cache mode.',
     ),
   limit: z.number().optional().describe('Number of docs per page (default: 25). Only used in content mode.'),
   order_by: z
@@ -170,7 +186,7 @@ export class ReadDocsTool extends BaseMondayApiTool<typeof readDocsToolSchema> {
   });
 
   getDescription(): string {
-    return `Get information about monday.com documents. Supports two modes:
+    return `Get information about monday.com documents. Supports three modes:
 
 MODE: "content" (default) — Fetch documents with their full markdown content.
 - Requires: type ("ids" | "object_ids" | "workspace_ids") and ids array
@@ -188,7 +204,15 @@ MODE: "version_history" — Fetch the edit history of a single document.
 - Set include_diff: true to see what content changed between versions (fetches up to ${MAX_DIFF_POINTS} diffs, may be slower).
 - Examples:
   - { mode: "version_history", ids: ["5001466606"], version_history_limit: 3 }
-  - { mode: "version_history", ids: ["5001466606"], since: "2026-03-11T00:00:00Z", include_diff: true }`;
+  - { mode: "version_history", ids: ["5001466606"], since: "2026-03-11T00:00:00Z", include_diff: true }
+
+MODE: "explore_cache" — Re-extract from a document already fetched by a prior "content" call, with NO API round-trip.
+- Requires: ids with a single document id that was fetched before in content mode.
+- Use query to return markdown lines containing a keyword (case-insensitive), or block_ids to pull specific blocks verbatim (needs include_blocks: true on the prior fetch).
+- Tokens: avoids re-fetching and re-rendering the whole document, so multi-turn workflows that revisit a doc (e.g. read_docs -> ... -> update_doc) cost less context.
+- Examples:
+  - { mode: "explore_cache", ids: ["5001466606"], query: "budget" }
+  - { mode: "explore_cache", ids: ["5001466606"], block_ids: ["block_42"] }`;
   }
 
   getInputSchema(): typeof readDocsToolSchema {
@@ -199,7 +223,20 @@ MODE: "version_history" — Fetch the edit history of a single document.
     if (input.mode === VERSION_HISTORY_MODE) {
       return this.executeVersionHistory(input);
     }
+    if (input.mode === EXPLORE_CACHE_MODE) {
+      return this.executeCacheExplore(input);
+    }
     return this.executeContent(input);
+  }
+
+  // Fetch-then-Explore extraction half: re-extract from a previously recorded doc without an API round-trip.
+  private async executeCacheExplore(input: ToolInputType<typeof readDocsToolSchema>): Promise<ToolOutputType<never>> {
+    const docId = input.ids?.[0];
+    if (!docId) {
+      return { content: 'Error: ids is required when mode is "explore_cache". Provide a single cached document id.' };
+    }
+    this.sessionContext.metadata = { ...this.sessionContext.metadata, mode: EXPLORE_CACHE_MODE, doc_ids: [docId] };
+    return exploreCachedDoc(docId, { query: input.query, block_ids: input.block_ids, limit: input.limit });
   }
 
   private async executeContent(input: ToolInputType<typeof readDocsToolSchema>): Promise<ToolOutputType<never>> {
@@ -588,6 +625,17 @@ MODE: "version_history" — Fetch the edit history of a single document.
             ...(includeComments && { comments }),
           };
         }),
+    );
+
+    // Fetch-then-Explore selection half: persist for later explore_cache re-extraction.
+    recordDocs(
+      docsInfo.map((d) => ({
+        id: d.id,
+        name: d.name,
+        object_id: d.object_id,
+        blocks_as_markdown: d.blocks_as_markdown,
+        blocks: d.blocks?.map((b) => ({ id: b.id, type: b.type ?? '', content: b.content })),
+      })),
     );
 
     const currentPage = variables.page || 1;
