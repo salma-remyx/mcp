@@ -452,3 +452,13 @@ It is clarified that the server uses the monday.com API, which is subject to mon
     <a href="https://github.com/mondaycom/mcp">GitHub</a>
   </p>
 </div>
+
+---
+
+## 🔬 Diagnostic Canary Tools
+
+This toolkit ships optional **canary tools**, diagnostic probes planted in an agent's tool set to surface tool-selection weaknesses. Each canary mimics the surface of a real tool but performs no real action, when an agent selects and calls it, the tool returns a structured diagnostic naming the trap type and the legitimate tool to use instead. The six trap types (semantic decoys, parameter traps, capability mirages, prerequisite blindness, temporal decoys, granularity traps) turn a single "wrong tool" outcome into a multi-dimensional profile of how an agent reasons about tools.
+
+Canaries are **disabled by default** so they never enter a normal agent's tool set. Enable one explicitly through `ToolsConfiguration.include` when running a diagnostic.
+
+Adapted from "Diagnosing Tool-Selection Reasoning in LLM Agents with Canary Tools".

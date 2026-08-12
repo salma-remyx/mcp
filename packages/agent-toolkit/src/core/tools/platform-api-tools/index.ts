@@ -47,6 +47,7 @@ import { GetTypeDetailsTool } from './get-type-details-tool';
 import { ListUsersAndTeamsTool } from './list-users-and-teams-tool/list-users-and-teams-tool';
 import { MoveItemToGroupTool } from './move-item-to-group-tool';
 import { ReadDocsTool } from './read-docs-tool/read-docs-tool';
+import { ReadDocSummaryCanaryTool, AnswerDocQuestionsCanaryTool } from './canary-tool/canary-tool';
 import { WorkspaceInfoTool } from './workspace-info-tool/workspace-info-tool';
 import { ListWorkspaceTool } from './list-workspace-tool/list-workspace-tool';
 import { CreateDocTool } from './create-doc-tool/create-doc-tool';
@@ -127,6 +128,9 @@ export const allGraphqlApiTools: BaseMondayApiToolConstructor[] = [
   CreateTimelineItemTool,
   FetchCustomActivityTool,
   ReadDocsTool,
+  // Diagnostic canary probes (disabled by default). Adapted from arXiv 2608.04719.
+  ReadDocSummaryCanaryTool,
+  AnswerDocQuestionsCanaryTool,
   WorkspaceInfoTool,
   ListWorkspaceTool,
   CreateDocTool,
@@ -237,6 +241,7 @@ export * from './list-users-and-teams-tool/list-users-and-teams-tool';
 export * from './manage-tools-tool';
 export * from './move-item-to-group-tool';
 export * from './read-docs-tool/read-docs-tool';
+export * from './canary-tool/canary-tool';
 export * from './workspace-info-tool/workspace-info-tool';
 export * from './list-workspace-tool/list-workspace-tool';
 export * from './create-doc-tool/create-doc-tool';
