@@ -8,6 +8,7 @@ import { Tool } from '../core/tool';
 import { MondayAgentToolkitConfig } from '../core/monday-agent-toolkit';
 import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-tool';
 import { DynamicToolManager } from './dynamic-tool-manager';
+import { selectToolsForTurn, type GateDecision } from './tool-gating';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
 
@@ -196,6 +197,29 @@ export class MondayAgentToolkit extends McpServer {
    */
   public getDynamicToolNames(): string[] {
     return this.dynamicToolManager.getDynamicToolNames();
+  }
+
+  /**
+   * Dynamically gate tools for a turn: expose only the tools most relevant to `query`
+   * within `tokenBudget` and defer the rest, so deferred tools' full schemas are not
+   * advertised this turn (cutting the per-turn "MCP/Tools Tax"). Selection drives the
+   * existing enable/disable handles, which the server fans out via its `listChanged`
+   * notification path.
+   *
+   * Adapted from "Tool Attention Is All You Need" (arXiv:2604.21816): the paper's learned
+   * gate is replaced by a parameter-free relevance proxy. With no `tokenBudget` the gate is
+   * a no-op (all tools stay exposed). The management meta-tool (if registered) is never
+   * deferred, so the agent can always expand the toolset on demand.
+   * @param query The current turn's user query.
+   * @param tokenBudget Optional approximate-token cap for exposed tool schemas.
+   * @param minTools Optional floor of always-exposed (most-relevant) tools.
+   * @returns The gating decision, including the measured per-turn token savings.
+   */
+  public gateToolsForQuery(query: string, tokenBudget?: number, minTools?: number): GateDecision {
+    const decision = selectToolsForTurn(this.toolInstances, query, { tokenBudget, minTools });
+    decision.enabledNames.forEach((name) => this.enableTool(name));
+    decision.deferredNames.forEach((name) => this.disableTool(name));
+    return decision;
   }
 
   getServer(): McpServer {
