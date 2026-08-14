@@ -8,11 +8,19 @@ import { Tool } from '../core/tool';
 import { MondayAgentToolkitConfig } from '../core/monday-agent-toolkit';
 import { ManageToolsTool } from '../core/tools/platform-api-tools/manage-tools-tool';
 import { DynamicToolManager } from './dynamic-tool-manager';
+import { LazySchemaOptions, selectPromotedTools, resolveLazySchema } from './lazy-schema-loader';
 import { API_VERSION } from 'src/utils/version.utils';
 import { formatToolError } from '../utils/error.utils';
 
 export interface GetToolsOptions {
   schemaFormat?: 'zod' | 'json';
+  /**
+   * Opt-in lazy schema loading. When set, the schemas emitted by getTools() /
+   * getToolsForMcp() are compressed to compact summaries, with full schemas
+   * hydrated only for a promoted top-k subset. Adapted from "Tool Attention Is
+   * All You Need" (arXiv:2604.21816) to cut the per-turn tools tax.
+   */
+  lazy?: LazySchemaOptions;
 }
 
 /**
@@ -222,10 +230,12 @@ export class MondayAgentToolkit extends McpServer {
       allTools.push(this.managementTool);
     }
 
+    const lazy = this.buildLazyContext(allTools, options);
+
     return allTools.map((tool) => ({
       name: tool.name,
       description: tool.getDescription(),
-      schema: this.getSchemaForTool(tool, options),
+      schema: this.getSchemaForTool(tool, options, lazy),
       annotations: tool.annotations,
       handler: this.createToolHandler(tool),
     }));
@@ -251,10 +261,12 @@ export class MondayAgentToolkit extends McpServer {
       allTools.push(this.managementTool);
     }
 
+    const lazy = this.buildLazyContext(allTools, options);
+
     return allTools.map((tool) => ({
       name: tool.name,
       description: tool.getDescription(),
-      schema: this.getSchemaForTool(tool, options),
+      schema: this.getSchemaForTool(tool, options, lazy),
       annotations: tool.annotations,
       handler: this.createMcpToolHandler(tool),
     }));
@@ -313,16 +325,46 @@ export class MondayAgentToolkit extends McpServer {
   }
 
   /**
+   * Resolve the lazy-schema promoted set for the given tools, or undefined when
+   * lazy mode is not requested. Computed once per getTools()/getToolsForMcp()
+   * call so every tool is resolved against the same promotion decision.
+   */
+  private buildLazyContext(
+    tools: Tool<any, any>[],
+    options?: GetToolsOptions,
+  ): { promoted: Set<string> } | undefined {
+    const lazyOpts = options?.lazy;
+    if (!lazyOpts) {
+      return undefined;
+    }
+    const summaries = tools.map((tool) => ({ name: tool.name, description: tool.getDescription() }));
+    return { promoted: selectPromotedTools(summaries, lazyOpts) };
+  }
+
+  /**
    * Get the schema for a tool in the requested format
    * @param tool The tool instance
    * @param options Options for schema format control
-   * @returns Schema in the requested format (Zod shape or JSON Schema)
+   * @param lazy Lazy-schema context (promoted set) when lazy mode is active
+   * @returns Schema in the requested format (Zod shape or JSON Schema), or a
+   * compact summary when the tool is not promoted under lazy mode
    */
-  private getSchemaForTool(tool: Tool<any, any>, options?: GetToolsOptions): any {
+  private getSchemaForTool(
+    tool: Tool<any, any>,
+    options?: GetToolsOptions,
+    lazy?: { promoted: Set<string> },
+  ): any {
     const inputSchema = tool.getInputSchema();
 
     if (!inputSchema) {
       return undefined;
+    }
+
+    // Lazy mode operates on JSON Schema, hydrating full schemas only for the
+    // promoted subset and emitting compact summaries for the rest.
+    if (lazy) {
+      const fullJsonSchema = zodToJsonSchema(z.object(inputSchema));
+      return resolveLazySchema(fullJsonSchema, tool.name, lazy.promoted);
     }
 
     if (options?.schemaFormat === 'json') {

@@ -1221,4 +1221,81 @@ describe('MondayAgentToolkit', () => {
       expect(tools[0].name).toBe('dynamic-tool');
     });
   });
+
+  describe('Lazy schema loading (getToolsForMcp)', () => {
+    const buildDescribedTool = (name: string, description: string) => ({
+      name,
+      type: ToolType.READ,
+      annotations: { audience: [] },
+      enabledByDefault: true,
+      getDescription: jest.fn().mockReturnValue(description),
+      getInputSchema: jest.fn().mockReturnValue({
+        param: z.string().describe(`The ${name} parameter explained in detail`),
+      }),
+      execute: jest.fn().mockResolvedValue({ content: 'OK' }),
+    });
+
+    const buildToolkit = (tools: any[]) => {
+      mockGetFilteredToolInstances.mockReturnValue(tools);
+      return new MondayAgentToolkit({ mondayApiToken: 'test-token' });
+    };
+
+    const descriptionOf = (tool?: { schema?: any }) => tool?.schema?.properties?.param?.description;
+
+    it('hydrates the full schema for promoted tools and a compact summary for the rest', () => {
+      const toolkit = buildToolkit([
+        buildDescribedTool('search_items', 'Search for items across boards by query'),
+        buildDescribedTool('create_doc', 'Create a new document in a workspace'),
+        buildDescribedTool('list_boards', 'List all boards in the workspace'),
+      ]);
+
+      const tools = toolkit.getToolsForMcp({ schemaFormat: 'json', lazy: { query: 'search items', topK: 1 } });
+      const find = (name: string) => tools.find((t) => t.name === name);
+      const searchItems = find('search_items');
+      const createDoc = find('create_doc');
+
+      expect(searchItems).toBeDefined();
+      expect(createDoc).toBeDefined();
+      // Promoted tool keeps its full schema (per-parameter description preserved).
+      expect(descriptionOf(searchItems)).toBe('The search_items parameter explained in detail');
+      // Non-promoted tools get a compact summary: structural shape only, no description.
+      expect(descriptionOf(createDoc)).toBeUndefined();
+      expect(createDoc!.schema.$schema).toBeUndefined();
+      // The compact summary is strictly smaller than the full schema (tools tax cut).
+      expect(JSON.stringify(createDoc!.schema).length).toBeLessThan(JSON.stringify(searchItems!.schema).length);
+    });
+
+    it('always hydrates an explicitly promoted tool regardless of query relevance', () => {
+      const toolkit = buildToolkit([
+        buildDescribedTool('search_items', 'Search for items across boards'),
+        buildDescribedTool('create_doc', 'Create a new document in a workspace'),
+        buildDescribedTool('list_boards', 'List all boards in the workspace'),
+      ]);
+
+      const tools = toolkit.getToolsForMcp({ schemaFormat: 'json', lazy: { promote: ['create_doc'], topK: 1 } });
+      const find = (name: string) => tools.find((t) => t.name === name);
+
+      expect(descriptionOf(find('create_doc'))).toBe('The create_doc parameter explained in detail');
+      expect(descriptionOf(find('search_items'))).toBeUndefined();
+    });
+
+    it('leaves schemas unchanged when lazy mode is not opted in', () => {
+      const toolkit = buildToolkit([buildDescribedTool('search_items', 'Search for items across boards')]);
+      const [tool] = toolkit.getToolsForMcp({ schemaFormat: 'json' });
+
+      expect(descriptionOf(tool)).toBe('The search_items parameter explained in detail');
+    });
+
+    it('emits JSON schemas under lazy mode even without an explicit schemaFormat', () => {
+      const toolkit = buildToolkit([
+        buildDescribedTool('search_items', 'Search for items across boards'),
+        buildDescribedTool('create_doc', 'Create a new document in a workspace'),
+      ]);
+      const tools = toolkit.getToolsForMcp({ lazy: { promote: ['search_items'], topK: 1 } });
+      const find = (name: string) => tools.find((t) => t.name === name);
+
+      expect(descriptionOf(find('search_items'))).toBe('The search_items parameter explained in detail');
+      expect(descriptionOf(find('create_doc'))).toBeUndefined();
+    });
+  });
 });
